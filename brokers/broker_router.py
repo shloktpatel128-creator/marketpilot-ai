@@ -90,19 +90,35 @@ class BrokerRouter:
             return BrokerOrderResult(False, message=f"Broker error: {exc}")
 
     def status(self) -> Dict[str, Any]:
+        fs = self.futures.get_summary()
+        alp = self.alpaca
+        alp._sync_account()
         return {
-            "dry_run": {"connected": True, "orders": len(self.dry_run.state["orders"])},
+            "dry_run": {"connected": True, "orders": self.dry_run.state["orders"]},
             "futures_simulator": {
                 "connected": True,
-                "equity": self.futures.state.equity,
-                "positions": len(self.futures.state.positions),
-                "daily_pnl": self.futures.state.daily_pnl,
+                "equity": fs["equity"],
+                "balance": fs["balance"],
+                "positions": fs["positions"],
+                "position_symbols": fs["position_symbols"],
+                "daily_pnl": fs["daily_pnl"],
+                "trade_count_today": fs["trade_count_today"],
+                "total_commission": fs["total_commission"],
+                "slippage_ticks": fs["slippage_ticks"],
+                "orders": fs["orders"],
+                "open_positions": fs["open_positions"],
             },
             "alpaca_paper": {
-                "connected": self.alpaca.connected,
-                "error": self.alpaca.init_error,
-                "equity": self.alpaca.state.equity,
-                "positions": len(self.alpaca.get_positions()),
-                "daily_pnl": self.alpaca.state.daily_pnl,
+                "connected": alp.connected,
+                "error": alp.init_error,
+                "equity": alp.state.equity,
+                "cash": alp.state.cash,
+                "buying_power": alp.state.buying_power,
+                "positions": len(alp.get_positions()),
+                "position_list": alp.get_positions(),
+                "daily_pnl": alp.state.daily_pnl,
+                "open_orders": alp.get_open_orders(),
+                "recent_orders": alp.get_recent_orders(10),
+                "health": alp.health(),
             },
         }

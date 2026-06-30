@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from storage.database import fetch_decisions, save_decision
+from storage.database import save_decision
 from storage.schemas import ScanResult, TradeDecision
 
 
@@ -36,4 +36,5 @@ class TradeJournal:
         return save_decision(row.to_dict())
 
     def get_recent(self, limit: int = 100, broker: Optional[str] = None) -> List[Dict[str, Any]]:
-        return fetch_decisions(limit, broker)
+        from storage.database import fetch_decisions_filtered
+        return fetch_decisions_filtered(limit=limit, broker=broker)

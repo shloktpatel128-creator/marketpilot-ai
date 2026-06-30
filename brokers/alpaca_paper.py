@@ -110,6 +110,49 @@ class AlpacaPaperBroker:
             logger.error("Positions fetch failed: %s", exc)
             return []
 
+    def get_recent_orders(self, limit: int = 20) -> List[Dict[str, Any]]:
+        if not self._client:
+            return list(self.state.orders[-limit:])
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            req = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=limit)
+            orders = self._client.get_orders(req)
+            return [
+                {
+                    "id": str(o.id), "symbol": o.symbol, "side": str(o.side),
+                    "qty": float(o.qty or 0), "status": str(o.status),
+                    "filled_avg_price": float(o.filled_avg_price or 0),
+                }
+                for o in orders
+            ]
+        except Exception as exc:
+            logger.error("Orders fetch failed: %s", exc)
+            return list(self.state.orders[-limit:])
+
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        if not self._client:
+            return []
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            req = GetOrdersRequest(status=QueryOrderStatus.OPEN)
+            orders = self._client.get_orders(req)
+            return [
+                {"id": str(o.id), "symbol": o.symbol, "side": str(o.side), "qty": float(o.qty or 0)}
+                for o in orders
+            ]
+        except Exception as exc:
+            logger.error("Open orders fetch failed: %s", exc)
+            return []
+
+    def health(self) -> Dict[str, Any]:
+        return {
+            "connected": self.connected,
+            "error": self.init_error,
+            "market_open": self.is_market_open() if self.connected else False,
+        }
+
     def place_order(
         self,
         symbol: str,

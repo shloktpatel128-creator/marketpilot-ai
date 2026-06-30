@@ -168,6 +168,21 @@ class FuturesSimulator:
             results.append(self.place_order(p.symbol, "SELL" if p.side == "BUY" else "BUY", p.qty, p.entry_price))
         return results
 
+    def get_summary(self) -> Dict[str, Any]:
+        total_commission = sum(o.get("commission", 0) for o in self.state.orders)
+        return {
+            "balance": self.state.balance,
+            "equity": self.state.equity,
+            "daily_pnl": self.state.daily_pnl,
+            "positions": len(self.state.positions),
+            "position_symbols": [p.symbol for p in self.state.positions],
+            "trade_count_today": self.state.trade_count_today,
+            "total_commission": total_commission,
+            "slippage_ticks": FUTURES_SLIPPAGE_TICKS,
+            "orders": self.state.orders[-20:],
+            "open_positions": self.get_positions(),
+        }
+
     def get_positions(self) -> List[Dict[str, Any]]:
         return [
             {"symbol": p.symbol, "side": p.side, "qty": p.qty, "entry_price": p.entry_price,

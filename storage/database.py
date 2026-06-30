@@ -84,14 +84,40 @@ def save_decision(row: Dict[str, Any]) -> int:
 
 
 def fetch_decisions(limit: int = 200, broker: Optional[str] = None) -> List[Dict[str, Any]]:
+    return fetch_decisions_filtered(limit=limit, broker=broker)
+
+
+def fetch_decisions_filtered(
+    limit: int = 200,
+    broker: Optional[str] = None,
+    symbol: Optional[str] = None,
+    strategy: Optional[str] = None,
+    approved: Optional[bool] = None,
+    date_prefix: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     init_db()
-    q = "SELECT * FROM trade_decisions"
-    params: tuple = ()
+    clauses = []
+    params: list = []
     if broker:
-        q += " WHERE broker_provider = ?"
-        params = (broker,)
+        clauses.append("broker_provider = ?")
+        params.append(broker)
+    if symbol:
+        clauses.append("symbol = ?")
+        params.append(symbol.upper())
+    if strategy:
+        clauses.append("strategy = ?")
+        params.append(strategy)
+    if approved is not None:
+        clauses.append("approved = ?")
+        params.append(int(approved))
+    if date_prefix:
+        clauses.append("timestamp LIKE ?")
+        params.append(f"{date_prefix}%")
+    q = "SELECT * FROM trade_decisions"
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
     q += " ORDER BY id DESC LIMIT ?"
-    params = params + (limit,)
+    params.append(limit)
     with get_conn() as conn:
         rows = conn.execute(q, params).fetchall()
     out = []
@@ -102,6 +128,16 @@ def fetch_decisions(limit: int = 200, broker: Optional[str] = None) -> List[Dict
         d["approved"] = bool(d.get("approved"))
         out.append(d)
     return out
+
+
+def db_health() -> Dict[str, Any]:
+    init_db()
+    try:
+        with get_conn() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM trade_decisions").fetchone()[0]
+        return {"ok": True, "entries": count}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def count_today(field: str = "approved") -> Dict[str, int]:
