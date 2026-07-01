@@ -33,6 +33,7 @@ class BotState:
     open_positions: int = 0
     buying_power: float = 0.0
     last_error: Optional[str] = None
+    last_scan_duration_ms: float = 0.0
     agent_outputs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     last_scan_results: List[Any] = field(default_factory=list)
 

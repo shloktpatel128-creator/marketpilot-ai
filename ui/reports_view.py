@@ -1,10 +1,14 @@
-"""Reports page — daily/weekly stats from journal."""
+"""Reports page — daily/weekly stats and AI briefings."""
 
 from __future__ import annotations
 
 import streamlit as st
 
+from analytics.performance import compute_performance
 from journal.reports import ai_summary, format_report_text, generate_daily_report, generate_weekly_report
+from services.briefing import generate_daily_briefing
+from services.watchlist import scan_watchlist
+from storage.database import export_decisions_csv
 from ui.empty_state import render_empty_state
 
 
@@ -53,14 +57,20 @@ def render_reports_view() -> None:
             st.json(daily["by_broker"])
     with tab_w:
         st.code(format_report_text(weekly))
-        st.caption(f"Total decisions (7d): {weekly.get('total_decisions', 0)}")
+        perf = compute_performance(b)
+        st.markdown(f"**Sharpe:** {perf.sharpe_ratio:.2f} | **Sortino:** {perf.sortino_ratio:.2f} | **Max DD:** {perf.max_drawdown:.1f}%")
 
     st.markdown("---")
-    st.markdown("#### Broker-Specific Reports")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("**Alpaca Paper**")
-        st.code(format_report_text(generate_daily_report("alpaca_paper")))
-    with col_b:
-        st.markdown("**Futures Simulator**")
-        st.code(format_report_text(generate_daily_report("futures_simulator")))
+    st.markdown("#### AI Daily Briefing")
+    if st.button("Generate Market Briefing"):
+        st.markdown(generate_daily_briefing())
+
+    st.markdown("#### Watchlist Rankings")
+    if st.button("Scan Watchlist"):
+        for e in scan_watchlist(limit=10):
+            st.write(f"**{e.symbol}** ({e.asset_class}) — score {e.opportunity_score:.0f} | {e.summary}")
+
+    if st.button("Export Journal CSV"):
+        path = "storage/journal_export.csv"
+        n = export_decisions_csv(path)
+        st.success(f"Exported {n} rows to {path}")

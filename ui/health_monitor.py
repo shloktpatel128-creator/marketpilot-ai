@@ -43,6 +43,8 @@ def render_health_monitor(engine: TradingEngine) -> None:
         ("Model", "Loaded", ModelRegistry().get_active()),
         ("Memory Usage", "OK", _memory_mb()),
         ("Last Error", "None" if not STATE.last_error else "Error", STATE.last_error or "—"),
+        ("Last Scan Duration", f"{STATE.last_scan_duration_ms:.0f}ms" if STATE.last_scan_duration_ms else "—",
+         f"Last scan: {STATE.last_scan_time or 'Never'}"),
         ("Trading Mode", MODE, "Live trading disabled" if not REAL_TRADING_ENABLED else "BLOCKED"),
         ("Database Path", "OK" if os.path.exists(DB_PATH) or db["ok"] else "Missing", DB_PATH),
     ]

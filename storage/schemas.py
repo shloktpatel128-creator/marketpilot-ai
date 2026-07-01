@@ -83,3 +83,8 @@ class ScanResult:
     order: Optional[OrderResult]
     agents_context: Dict[str, str] = field(default_factory=dict)
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    indicator_snapshot: Dict[str, Any] = field(default_factory=dict)
+    trade_plan: Optional[Dict[str, Any]] = None
+    cio_decision: str = ""
+    regime: str = ""
+    scan_duration_ms: float = 0.0

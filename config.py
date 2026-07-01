@@ -65,9 +65,18 @@ FUTURES_MAX_TRADES_DAY: int = int(os.getenv("FUTURES_MAX_TRADES_DAY", "20"))
 # ---------------------------------------------------------------------------
 VALID_PERIODS = ["1mo", "3mo", "6mo", "1y", "5y"]
 VALID_INTERVALS = ["1d", "1h"]
-DEFAULT_STOCK_SYMBOLS = ["AAPL", "TSLA", "NVDA", "SPY", "QQQ"]
+DEFAULT_STOCK_SYMBOLS = ["AAPL", "TSLA", "NVDA", "SPY", "QQQ", "MSFT", "AMZN", "META", "GOOGL", "AMD"]
 DEFAULT_FUTURES_SYMBOLS = ["MES", "MNQ", "MGC", "MCL", "MYM", "M2K"]
+DEFAULT_FOREX_SYMBOLS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X"]
+DEFAULT_CRYPTO_SYMBOLS = ["BTC-USD", "ETH-USD", "SOL-USD"]
 DEFAULT_TICKERS = DEFAULT_STOCK_SYMBOLS  # legacy alias
+
+# Scheduler
+SCAN_INTERVAL_MINUTES: int = int(os.getenv("SCAN_INTERVAL_MINUTES", "15"))
+
+# AI model
+OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+USE_KELLY_SIZING: bool = os.getenv("USE_KELLY_SIZING", "false").lower() == "true"
 
 SMA_PERIODS = [20, 50, 200]
 EMA_FAST, EMA_SLOW = 12, 26

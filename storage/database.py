@@ -1,4 +1,4 @@
-"""SQLite persistence for journal entries."""
+"""SQLite persistence — extended schema for institutional platform."""
 
 from __future__ import annotations
 
@@ -27,6 +27,17 @@ def get_conn():
         conn.close()
 
 
+def _migrate_columns(conn) -> None:
+    extras = [
+        ("indicator_snapshot", "TEXT"), ("trade_plan", "TEXT"), ("cio_decision", "TEXT"),
+        ("agent_outputs", "TEXT"), ("regime", "TEXT"), ("scan_duration_ms", "REAL"),
+    ]
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(trade_decisions)").fetchall()}
+    for col, typ in extras:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE trade_decisions ADD COLUMN {col} {typ}")
+
+
 def init_db() -> None:
     with get_conn() as conn:
         conn.executescript("""
@@ -53,11 +64,27 @@ def init_db() -> None:
             result TEXT,
             pnl REAL
         );
-        CREATE TABLE IF NOT EXISTS bot_state (
+        CREATE TABLE IF NOT EXISTS market_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            evaluation_id TEXT,
+            symbol TEXT,
+            timestamp TEXT,
+            indicators TEXT,
+            regime TEXT
+        );
+        CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
             value TEXT
         );
+        CREATE TABLE IF NOT EXISTS watchlist_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            asset_class TEXT,
+            score REAL,
+            timestamp TEXT
+        );
         """)
+        _migrate_columns(conn)
 
 
 def save_decision(row: Dict[str, Any]) -> int:
@@ -68,8 +95,9 @@ def save_decision(row: Dict[str, Any]) -> int:
                 evaluation_id, broker_provider, symbol, strategy, action,
                 setup_detected, approved, rejection_reasons, entry, stop_loss,
                 take_profit, confidence, model_version, risk_score,
-                market_conditions, news_context, timestamp, order_id, result, pnl
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                market_conditions, news_context, timestamp, order_id, result, pnl,
+                indicator_snapshot, trade_plan, cio_decision, agent_outputs, regime, scan_duration_ms
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 row.get("evaluation_id"), row.get("broker_provider"), row.get("symbol"),
                 row.get("strategy"), row.get("action"), int(row.get("setup_detected", False)),
@@ -78,9 +106,38 @@ def save_decision(row: Dict[str, Any]) -> int:
                 row.get("confidence"), row.get("model_version"), row.get("risk_score"),
                 row.get("market_conditions"), row.get("news_context"), row.get("timestamp"),
                 row.get("order_id"), row.get("result"), row.get("pnl"),
+                json.dumps(row.get("indicator_snapshot", {})),
+                json.dumps(row.get("trade_plan", {})),
+                row.get("cio_decision", ""),
+                json.dumps(row.get("agent_outputs", {})),
+                row.get("regime", ""),
+                row.get("scan_duration_ms", 0),
             ),
         )
         return cur.lastrowid or 0
+
+
+def save_market_snapshot(evaluation_id: str, symbol: str, indicators: dict, regime: str) -> None:
+    init_db()
+    from datetime import datetime
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO market_snapshots (evaluation_id, symbol, timestamp, indicators, regime) VALUES (?,?,?,?,?)",
+            (evaluation_id, symbol, datetime.utcnow().isoformat(), json.dumps(indicators), regime),
+        )
+
+
+def get_setting(key: str, default: str = "") -> str:
+    init_db()
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    init_db()
+    with get_conn() as conn:
+        conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?,?)", (key, value))
 
 
 def fetch_decisions(limit: int = 200, broker: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -94,6 +151,7 @@ def fetch_decisions_filtered(
     strategy: Optional[str] = None,
     approved: Optional[bool] = None,
     date_prefix: Optional[str] = None,
+    search: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     init_db()
     clauses = []
@@ -113,6 +171,9 @@ def fetch_decisions_filtered(
     if date_prefix:
         clauses.append("timestamp LIKE ?")
         params.append(f"{date_prefix}%")
+    if search:
+        clauses.append("(symbol LIKE ? OR strategy LIKE ? OR cio_decision LIKE ?)")
+        params.extend([f"%{search}%"] * 3)
     q = "SELECT * FROM trade_decisions"
     if clauses:
         q += " WHERE " + " AND ".join(clauses)
@@ -123,7 +184,13 @@ def fetch_decisions_filtered(
     out = []
     for r in rows:
         d = dict(r)
-        d["rejection_reasons"] = json.loads(d.get("rejection_reasons") or "[]")
+        for jf in ("rejection_reasons", "indicator_snapshot", "trade_plan", "agent_outputs"):
+            raw = d.get(jf)
+            if raw and isinstance(raw, str):
+                try:
+                    d[jf] = json.loads(raw)
+                except json.JSONDecodeError:
+                    pass
         d["setup_detected"] = bool(d.get("setup_detected"))
         d["approved"] = bool(d.get("approved"))
         out.append(d)
@@ -135,7 +202,8 @@ def db_health() -> Dict[str, Any]:
     try:
         with get_conn() as conn:
             count = conn.execute("SELECT COUNT(*) FROM trade_decisions").fetchone()[0]
-        return {"ok": True, "entries": count}
+            snaps = conn.execute("SELECT COUNT(*) FROM market_snapshots").fetchone()[0]
+        return {"ok": True, "entries": count, "snapshots": snaps}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -146,8 +214,7 @@ def count_today(field: str = "approved") -> Dict[str, int]:
     today = date.today().isoformat()
     with get_conn() as conn:
         total = conn.execute(
-            "SELECT COUNT(*) FROM trade_decisions WHERE timestamp LIKE ?",
-            (f"{today}%",),
+            "SELECT COUNT(*) FROM trade_decisions WHERE timestamp LIKE ?", (f"{today}%",),
         ).fetchone()[0]
         setups = conn.execute(
             "SELECT COUNT(*) FROM trade_decisions WHERE timestamp LIKE ? AND setup_detected = 1",
@@ -162,3 +229,17 @@ def count_today(field: str = "approved") -> Dict[str, int]:
             (f"{today}%",),
         ).fetchone()[0]
     return {"total": total, "setups": setups, "approved": approved, "rejected": rejected, "trades": approved}
+
+
+def export_decisions_csv(path: str, limit: int = 5000) -> int:
+    import csv
+    rows = fetch_decisions_filtered(limit=limit)
+    if not rows:
+        return 0
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=rows[0].keys())
+        w.writeheader()
+        for r in rows:
+            flat = {k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in r.items()}
+            w.writerow(flat)
+    return len(rows)

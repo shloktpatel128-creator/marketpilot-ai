@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 from core.event_log import EVENT_LOG
+from config import SCAN_INTERVAL_MINUTES
 from core.scheduler import ScanScheduler
 from core.state import STATE
 
@@ -20,10 +21,10 @@ class BotRunner:
 
     _instance: Optional["BotRunner"] = None
 
-    def __init__(self, interval_minutes: int = 15) -> None:
+    def __init__(self, interval_minutes: int = None) -> None:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
-        self._scheduler = ScanScheduler(interval_minutes=interval_minutes)
+        self._scheduler = ScanScheduler(interval_minutes=interval_minutes or SCAN_INTERVAL_MINUTES)
         self._last_run: Optional[datetime] = None
         self._engine: Optional["TradingEngine"] = None
 

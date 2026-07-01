@@ -95,7 +95,7 @@ class RiskEngine:
         if not ctx.market_open and ctx.broker == "alpaca_paper":
             reasons.append("Market closed.")
 
-        if not self._in_trading_hours():
+        if not self._in_trading_hours() and ctx.broker == "alpaca_paper":
             reasons.append("Outside allowed trading hours.")
 
         adjusted = min(position_size_usd, MAX_POSITION_SIZE_USD, ctx.buying_power * MAX_RISK_PER_TRADE_PCT * 10)
@@ -109,6 +109,6 @@ class RiskEngine:
 
     @staticmethod
     def _in_trading_hours() -> bool:
-        # US equities roughly 9:30-16:00 ET — simplified UTC check
+        from datetime import datetime, time
         now = datetime.utcnow().time()
-        return time(14, 0) <= now <= time(21, 0) or True  # Phase 1: permissive for testing
+        return time(14, 30) <= now <= time(21, 0)

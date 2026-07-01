@@ -60,16 +60,7 @@ def render_journal_view() -> None:
     st.dataframe(df[show], use_container_width=True, hide_index=True)
 
     with st.expander("Detail view (latest 5)"):
+        from services.ai_trade_journal import explain_trade
         for r in rows[:5]:
-            st.markdown(f"### {r['symbol']} — {r['timestamp']}")
-            st.write(f"**Evaluation ID:** {r.get('evaluation_id')}")
-            st.write(f"**Strategy:** {r.get('strategy')} | **Broker:** {r.get('broker_provider')}")
-            st.write(f"**Setup:** {r.get('setup_detected')} | **Approved:** {r.get('approved')}")
-            st.write(f"**Confidence:** {r.get('confidence')} | **Risk score:** {r.get('risk_score')}")
-            if r.get("rejection_reasons"):
-                st.write(f"**Rejection:** {', '.join(r['rejection_reasons'])}")
-            if r.get("news_context"):
-                st.write(f"**AI context:** {r['news_context'][:200]}")
-            if r.get("market_conditions"):
-                st.write(f"**Data quality:** {r['market_conditions']}")
+            st.markdown(explain_trade(r))
             st.divider()

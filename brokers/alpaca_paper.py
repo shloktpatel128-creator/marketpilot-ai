@@ -188,6 +188,19 @@ class AlpacaPaperBroker:
             order = self._client.submit_order(req)
             self.state.trade_count_today += 1
             self.state.orders.append({"id": str(order.id), "symbol": sym, "side": side, "notional": notional})
+
+            # Attach stop-loss order if provided
+            if stop_loss and side.upper() == "BUY":
+                try:
+                    from alpaca.trading.enums import OrderSide
+                    from alpaca.trading.requests import StopLossRequest
+                    self._client.submit_order(StopLossRequest(
+                        symbol=sym, qty=float(order.qty or 0), side=OrderSide.SELL,
+                        stop_price=round(stop_loss, 2), time_in_force=TimeInForce.GTC,
+                    ))
+                except Exception as sl_exc:
+                    logger.warning("Stop-loss order failed: %s", sl_exc)
+
             self.state.pending_symbols.discard(sym)
             self._sync_account()
             return BrokerOrderResult(True, str(order.id), f"Paper {side} {sym} submitted.", qty=float(order.qty or 0))

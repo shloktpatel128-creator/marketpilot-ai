@@ -6,6 +6,7 @@ from collections import Counter
 from datetime import date, timedelta
 from typing import Any, Dict, List
 
+from analytics.performance import compute_performance
 from storage.database import fetch_decisions
 
 
@@ -14,7 +15,7 @@ def _filter_period(rows: List[Dict], days: int = 1) -> List[Dict]:
     return [r for r in rows if (r.get("timestamp") or "") >= cutoff]
 
 
-def _calc_stats(trades: List[Dict], setups: List[Dict], rejected: List[Dict]) -> Dict[str, Any]:
+def _calc_stats(trades: List[Dict], setups: List[Dict], rejected: List[Dict], broker=None) -> Dict[str, Any]:
     wins = [r for r in trades if (r.get("pnl") or 0) > 0]
     losses = [r for r in trades if (r.get("pnl") or 0) < 0]
     win_pnls = [r.get("pnl", 0) for r in wins]
@@ -39,7 +40,7 @@ def _calc_stats(trades: List[Dict], setups: List[Dict], rejected: List[Dict]) ->
         "avg_loss": avg_loss,
         "profit_factor": profit_factor if profit_factor != float("inf") else None,
         "expectancy": expectancy,
-        "max_drawdown": 0.0,  # placeholder until closed-trade P/L tracked
+        "max_drawdown": compute_performance(broker).max_drawdown,
         "common_rejections": dict(reasons.most_common(5)),
         "by_symbol": dict(Counter(r["symbol"] for r in trades)),
         "by_strategy": dict(Counter(r["strategy"] for r in setups)),
@@ -53,7 +54,7 @@ def generate_daily_report(broker: str = None) -> Dict[str, Any]:
     setups = [r for r in today if r.get("setup_detected")]
     trades = [r for r in today if r.get("approved")]
     rejected = [r for r in setups if not r.get("approved")]
-    stats = _calc_stats(trades, setups, rejected)
+    stats = _calc_stats(trades, setups, rejected, broker)
     return {"period": "daily", "date": date.today().isoformat(), "broker": broker or "all", **stats}
 
 
@@ -62,7 +63,7 @@ def generate_weekly_report(broker: str = None) -> Dict[str, Any]:
     setups = [r for r in rows if r.get("setup_detected")]
     trades = [r for r in rows if r.get("approved")]
     rejected = [r for r in setups if not r.get("approved")]
-    stats = _calc_stats(trades, setups, rejected)
+    stats = _calc_stats(trades, setups, rejected, broker)
     return {"period": "weekly", "date": date.today().isoformat(), "broker": broker or "all", "total_decisions": len(rows), **stats}
 
 
