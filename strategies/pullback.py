@@ -1,10 +1,11 @@
-"""Pullback strategy."""
+"""Pullback — trend pullback to moving-average support/resistance."""
 
 from __future__ import annotations
 
 import pandas as pd
 
 from strategies.base import BaseStrategy
+from strategies.helpers import _f, atr_stop, build_signal, hold_signal, min_bars
 from storage.schemas import StrategySignal
 
 
@@ -12,34 +13,49 @@ class PullbackStrategy(BaseStrategy):
     name = "pullback"
 
     def evaluate(self, df: pd.DataFrame, symbol: str) -> StrategySignal:
-        if len(df) < 50 or "SMA_50" not in df.columns:
-            return StrategySignal(False, "HOLD", None, None, None, 0, "Insufficient data", [], self.name)
-        row = df.iloc[-1]
-        prev = df.iloc[-2]
-        close = float(row["Close"])
-        sma50 = float(row["SMA_50"])
-        rsi = float(row.get("RSI", 50) or 50)
+        debug = []
+        if not min_bars(df, 50):
+            return hold_signal(self.name, 0, "Need 50+ bars", ["bars<50"])
 
-        uptrend = close > sma50 and float(prev["SMA_20"]) > float(prev["SMA_50"]) if "SMA_20" in df.columns else close > sma50
-        if uptrend and 35 <= rsi <= 45:
+        row = df.iloc[-1]
+        close = _f(row, "Close")
+        sma20 = _f(row, "SMA_20", close)
+        sma50 = _f(row, "SMA_50", close)
+        ema20 = _f(row, "EMA_20", sma20)
+        rsi = _f(row, "RSI", 50)
+        adx = _f(row, "ADX", 20)
+
+        debug.append(f"close={close:.2f} sma50={sma50:.2f} rsi={rsi:.0f} adx={adx:.0f}")
+
+        uptrend = close > sma50 and sma20 > sma50 * 0.998
+        near_support = abs(close - ema20) / ema20 < 0.015 or abs(close - sma20) / sma20 < 0.015
+
+        if uptrend and near_support and 28 <= rsi <= 52:
             entry = close
-            stop = sma50 * 0.99
-            target = entry * 1.03
-            rr = (target - entry) / (entry - stop) if entry > stop else 0
-            return StrategySignal(
-                True, "BUY", entry, stop, target, round(rr, 2),
-                f"Pullback to support in uptrend (RSI {rsi:.0f}).",
-                ["SMA_50", "RSI"], self.name,
+            stop = min(sma50 * 0.985, atr_stop(df, "BUY", entry, 1.2))
+            target = entry + (entry - stop) * 2.0
+            conf = 55 + min(20, adx) + (10 if rsi <= 42 else 0)
+            return build_signal(
+                self.name, "BUY", entry, stop, target,
+                f"Pullback buy in uptrend — RSI {rsi:.0f}, near EMA20/SMA20 support",
+                ["SMA_50", "SMA_20", "EMA_20", "RSI", "ADX"],
+                conf, invalidation=stop, debug=debug,
             )
-        downtrend = close < sma50
-        if downtrend and 55 <= rsi <= 65:
+
+        downtrend = close < sma50 and sma20 < sma50 * 1.002
+        near_resistance = near_support
+
+        if downtrend and near_resistance and 48 <= rsi <= 72:
             entry = close
-            stop = sma50 * 1.01
-            target = entry * 0.97
-            rr = (entry - target) / (stop - entry) if stop > entry else 0
-            return StrategySignal(
-                True, "SELL", entry, stop, target, round(rr, 2),
-                f"Pullback rally in downtrend (RSI {rsi:.0f}).",
-                ["SMA_50", "RSI"], self.name,
+            stop = max(sma50 * 1.015, atr_stop(df, "SELL", entry, 1.2))
+            target = entry - (stop - entry) * 2.0
+            conf = 55 + min(20, adx) + (10 if rsi >= 58 else 0)
+            return build_signal(
+                self.name, "SELL", entry, stop, target,
+                f"Pullback sell in downtrend — RSI {rsi:.0f}, near EMA20/SMA20 resistance",
+                ["SMA_50", "SMA_20", "EMA_20", "RSI", "ADX"],
+                conf, invalidation=stop, debug=debug,
             )
-        return StrategySignal(False, "HOLD", close, None, None, 0, "No pullback setup.", ["SMA_50", "RSI"], self.name)
+
+        debug.append(f"uptrend={uptrend} downtrend={downtrend} near_ma={near_support}")
+        return hold_signal(self.name, close, "No pullback setup", debug)

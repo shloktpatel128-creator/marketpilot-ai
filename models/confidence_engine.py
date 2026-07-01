@@ -38,6 +38,7 @@ class ConfidenceInputs:
     agent_scores: Optional[Dict[str, float]] = None
     strategy_win_rate: float = 50.0
     direction: str = "HOLD"
+    strategy_setup_confidence: float = 0.0
 
 
 class ConfidenceEngine:
@@ -138,6 +139,9 @@ class ConfidenceEngine:
         components["agent_consensus"] = min(100, max(0, agent_score))
 
         final = sum(components[k] * WEIGHTS[k] for k in WEIGHTS)
+        if inputs.strategy_setup_confidence > 0:
+            final = max(final, inputs.strategy_setup_confidence * 0.65 + final * 0.35)
+            reasons.append(f"Setup {inputs.strategy_setup_confidence:.0f}")
         final = min(100, max(0, final))
 
         expl = f"AI confidence {final:.0f}/100 — " + "; ".join(reasons[:5])

@@ -18,6 +18,9 @@ class StrategySignal:
     reason: str
     features_used: List[str] = field(default_factory=list)
     strategy_name: str = ""
+    invalidation_level: Optional[float] = None
+    setup_confidence: float = 0.0
+    debug_notes: List[str] = field(default_factory=list)
 
 
 @dataclass

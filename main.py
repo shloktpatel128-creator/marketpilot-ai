@@ -11,20 +11,59 @@ from core.state import STATE
 from notifications import discord_notifier
 
 
+def _print_scan_debug(result) -> None:
+    sig = result.strategy_signal
+    direction = sig.direction if sig.setup_detected else "HOLD"
+    print(f"\n{'=' * 60}")
+    print(f"{result.symbol} | {result.broker} | {direction}")
+    print(f"{'=' * 60}")
+
+    if result.agents_context.get("strategy_debug"):
+        print(result.agents_context["strategy_debug"])
+
+    if sig.setup_detected:
+        print(f"\nSelected: {sig.strategy_name} ({sig.direction})")
+        print(f"  Entry:       {sig.entry}")
+        print(f"  Stop loss:   {sig.stop_loss}")
+        print(f"  Take profit: {sig.take_profit}")
+        print(f"  Invalidation:{sig.invalidation_level}")
+        print(f"  R:R:         {sig.reward_risk:.2f}")
+        print(f"  Setup conf:  {sig.setup_confidence:.0f}")
+        print(f"  Reason:      {sig.reason}")
+    else:
+        print(f"\nHOLD — {sig.reason}")
+        if sig.debug_notes:
+            for note in sig.debug_notes[:6]:
+                print(f"  • {note}")
+
+    print(f"\nAI confidence: {result.confidence.confidence:.0f}/100")
+    print(f"Risk approved: {result.risk.approved}")
+    if result.risk.rejection_reasons:
+        print("Rejection reasons:")
+        for r in result.risk.rejection_reasons:
+            print(f"  • {r}")
+    elif result.risk.approved:
+        print("  All risk checks passed (stop, R:R, confidence, data quality, limits).")
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     engine = TradingEngine()
     if args.symbol:
         broker = args.broker or "dry_run"
         result = engine.scan_symbol(args.symbol.upper(), broker, strategy_name=args.strategy)
-        print(f"{result.symbol} | {result.broker} | setup={result.strategy_signal.setup_detected} "
-              f"| approved={result.risk.approved} | conf={result.confidence.confidence:.0f}")
-        if result.risk.rejection_reasons:
-            print("Rejections:", "; ".join(result.risk.rejection_reasons))
+        _print_scan_debug(result)
         return 0
     results = engine.run_full_scan()
-    print(f"Full scan: {len(results)} evaluations")
+    print(f"\nFull scan: {len(results)} evaluations\n")
     for r in results:
-        print(f"  {r.symbol:6} {r.broker:18} approved={r.risk.approved} conf={r.confidence.confidence:.0f}")
+        sig = r.strategy_signal
+        direction = sig.direction if sig.setup_detected else "HOLD"
+        status = "APPROVED" if r.risk.approved else "REJECTED" if sig.setup_detected else "HOLD"
+        print(f"  {r.symbol:6} {r.broker:18} {direction:4} {status:8} conf={r.confidence.confidence:.0f} rr={sig.reward_risk:.2f}")
+        if not r.risk.approved and r.risk.rejection_reasons:
+            print(f"         → {r.risk.rejection_reasons[0]}")
+        elif direction == "HOLD" and sig.reason:
+            print(f"         → {sig.reason[:70]}")
     return 0
 
 

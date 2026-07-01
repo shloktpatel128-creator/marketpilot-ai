@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from typing import Callable, List, Optional
+
+import pandas as pd
 
 from agents.pipeline import AgentPipeline
 from analytics.performance import strategy_win_rates
@@ -30,17 +33,11 @@ from services.regime import detect_regime
 from services.trade_plan import generate_trade_plan
 from storage.database import init_db
 from storage.schemas import ConfidenceResult, OrderResult, RiskDecision, ScanResult, StrategySignal
-from strategies.breakout import BreakoutStrategy
-from strategies.pullback import PullbackStrategy
-from strategies.vwap_momentum import VWAPMomentumStrategy
+from strategies.scanner import ALL_STRATEGIES, format_strategy_debug, scan_all_strategies
 
 logger = logging.getLogger(__name__)
 
-STRATEGIES = {
-    "vwap_momentum": VWAPMomentumStrategy(),
-    "breakout": BreakoutStrategy(),
-    "pullback": PullbackStrategy(),
-}
+STRATEGIES = ALL_STRATEGIES  # backward compat
 
 
 class TradingEngine:
@@ -68,14 +65,19 @@ class TradingEngine:
             self._step_callback(step, detail)
 
     def _pick_strategy(self, name: Optional[str] = None, regime=None):
-        if regime and regime.recommended_strategies:
-            chosen_name = name or regime.recommended_strategies[0]
-        else:
-            chosen_name = name
         from config import DEFAULT_STRATEGY
-        chosen = STRATEGIES.get(chosen_name or DEFAULT_STRATEGY, STRATEGIES["vwap_momentum"])
+        chosen_name = name or (regime.recommended_strategies[0] if regime and regime.recommended_strategies else DEFAULT_STRATEGY)
+        chosen = STRATEGIES.get(chosen_name, STRATEGIES["vwap_momentum"])
         STATE.active_strategy = chosen.name
         return chosen
+
+    def _evaluate_strategies(self, df: pd.DataFrame, symbol: str, strategy_name: Optional[str] = None):
+        """Run all strategies or a single named strategy."""
+        if strategy_name and strategy_name in STRATEGIES:
+            sig = STRATEGIES[strategy_name].evaluate(df, symbol)
+            debug_map = {strategy_name: f"{sig.direction} conf={sig.setup_confidence:.0f} rr={sig.reward_risk:.2f}"}
+            return sig, [sig], debug_map
+        return scan_all_strategies(df, symbol)
 
     def _log_failure(self, symbol: str, broker: str, reason: str) -> None:
         self._emit("Pipeline Error", f"{symbol}/{broker}: {reason}", "error")
@@ -134,22 +136,40 @@ class TradingEngine:
         # 6. Regime detection
         self._emit("Regime", "Detecting market regime")
         regime = detect_regime(df)
-        strategy = self._pick_strategy(strategy_name, regime)
 
-        # 7. Strategy signal
-        self._emit("Strategy", f"Running {strategy.name} in {regime.regime} regime")
-        sig = strategy.evaluate(df, symbol)
+        # 7. Strategy scan (all strategies unless one specified)
+        self._emit("Strategy", "Scanning all strategy modules")
+        sig, all_sigs, debug_map = self._evaluate_strategies(df, symbol, strategy_name)
+        debug_text = format_strategy_debug(debug_map)
+        self._emit("Strategy Debug", debug_text)
+        STATE.active_strategy = sig.strategy_name or "none"
+        if sig.setup_detected:
+            self._emit("Strategy", (
+                f"SETUP {sig.direction} via {sig.strategy_name} — "
+                f"entry={sig.entry} stop={sig.stop_loss} target={sig.take_profit} "
+                f"rr={sig.reward_risk} conf={sig.setup_confidence:.0f}"
+            ), "trade")
+        else:
+            self._emit("Strategy", f"HOLD — {sig.reason}")
 
-        # 8. Trade plan
+        # 8. Trade plan (position sizing only — preserve strategy levels)
         buying_power = 100_000.0
         if broker == "futures_simulator":
             buying_power = self.router.futures.state.equity
         elif broker == "alpaca_paper" and self.router.alpaca.connected:
             buying_power = self.router.alpaca.state.buying_power
 
+        plan_conf = sig.setup_confidence if sig.setup_confidence else 50
         direction = sig.direction if sig.setup_detected else "NO_TRADE"
-        plan = generate_trade_plan(df, direction, 50, buying_power)
-        if sig.setup_detected and plan.entry:
+        plan = generate_trade_plan(df, direction, plan_conf, buying_power)
+        if sig.setup_detected and sig.entry and sig.stop_loss and sig.take_profit:
+            # Keep strategy-derived levels; use plan for sizing metadata only
+            plan.entry = sig.entry
+            plan.stop_loss = sig.stop_loss
+            plan.take_profit = sig.take_profit
+            plan.reward_risk = sig.reward_risk
+            plan.direction = sig.direction
+        elif sig.setup_detected and plan.entry:
             sig.entry = plan.entry
             sig.stop_loss = plan.stop_loss
             sig.take_profit = plan.take_profit
@@ -176,17 +196,9 @@ class TradingEngine:
         agents_out["regime"] = regime.summary
         agents_out["mtf"] = mtf.summary
         agents_out["news"] = news.summary
+        agents_out["strategy_debug"] = debug_text
 
-        # Override direction from CIO if stronger signal
-        if cio.final_action in ("BUY", "SELL") and cio.confidence >= 60:
-            if not sig.setup_detected:
-                sig = StrategySignal(True, cio.final_action, plan.entry, plan.stop_loss, plan.take_profit,
-                                     plan.reward_risk, cio.consensus_summary, ["CIO"], strategy.name)
-            elif cio.final_action == "NO_TRADE":
-                sig = StrategySignal(False, "HOLD", sig.entry, sig.stop_loss, sig.take_profit, 0,
-                                     "CIO veto: " + cio.consensus_summary, [], strategy.name)
-
-        from datetime import datetime
+        # CIO provides context only — does not override strategy signal (RiskEngine decides)
         for v in cio.votes:
             STATE.agent_outputs[v.agent] = {"output": v.reasoning, "last_run": datetime.utcnow().isoformat(),
                                             "active": True, "recommendation": v.recommendation}
@@ -194,11 +206,13 @@ class TradingEngine:
         # 10. Weighted confidence engine
         self._emit("Confidence Engine", "Computing weighted AI confidence")
         win_rates = strategy_win_rates()
+        strat_name = sig.strategy_name or "vwap_momentum"
         conf = self.confidence_engine.score(ConfidenceInputs(
             df=df, mtf=mtf, news=news, macro=macro, regime=regime,
             agent_scores={v.agent: v.confidence - 50 for v in cio.votes},
-            strategy_win_rate=win_rates.get(strategy.name, 50),
+            strategy_win_rate=win_rates.get(strat_name, 50),
             direction=sig.direction if sig.setup_detected else cio.final_action,
+            strategy_setup_confidence=sig.setup_confidence if sig.setup_detected else 0.0,
         ))
         self._emit("Confidence Engine", f"{conf.confidence:.0f}/100 — {conf.explanation[:100]}")
 
@@ -227,8 +241,17 @@ class TradingEngine:
         # 12. RiskEngine (final authority — agents cannot override)
         self._emit("Risk Engine", "Final trade authorization")
         risk = self.risk.evaluate(sig, conf, ctx, plan.position_size_usd or notional)
-        if cio.final_action == "NO_TRADE":
-            risk = RiskDecision(False, risk.rejection_reasons + ["CIO recommended NO_TRADE"], None, risk.risk_score)
+
+        # Decision summary for debugging
+        decision = sig.direction if sig.setup_detected else "HOLD"
+        if risk.approved:
+            decision_detail = f"{decision} APPROVED — {sig.strategy_name}: {sig.reason[:80]}"
+        else:
+            decision_detail = (
+                f"{decision} REJECTED — setup={sig.setup_detected} conf={conf.confidence:.0f} "
+                f"rr={sig.reward_risk:.2f} | {'; '.join(risk.rejection_reasons)}"
+            )
+        self._emit("Decision", decision_detail, "trade" if risk.approved else "warn")
 
         if risk.approved:
             self._emit("Risk Engine", f"APPROVED — score {risk.risk_score:.0f}", "trade")

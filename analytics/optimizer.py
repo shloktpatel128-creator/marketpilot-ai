@@ -10,9 +10,7 @@ import pandas as pd
 from data.market_data import fetch_ohlcv
 from features.feature_engineering import add_features
 from services.indicators import compute_institutional_indicators
-from strategies.breakout import BreakoutStrategy
-from strategies.pullback import PullbackStrategy
-from strategies.vwap_momentum import VWAPMomentumStrategy
+from strategies.scanner import ALL_STRATEGIES
 
 
 @dataclass
@@ -24,11 +22,7 @@ class StrategyRank:
     summary: str
 
 
-STRATEGIES = {
-    "vwap_momentum": VWAPMomentumStrategy(),
-    "breakout": BreakoutStrategy(),
-    "pullback": PullbackStrategy(),
-}
+STRATEGIES = ALL_STRATEGIES
 
 
 def rank_strategies(symbol: str = "SPY", period: str = "1y") -> List[StrategyRank]:
